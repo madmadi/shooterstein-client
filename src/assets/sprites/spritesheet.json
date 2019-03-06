@@ -15,14 +15,22 @@
 	"trimmed": false,
 	"spriteSourceSize": {"x":0,"y":0,"w":75,"h":75},
 	"sourceSize": {"w":75,"h":75}
+},
+"stone.png":
+{
+	"frame": {"x":150,"y":0,"w":30,"h":30},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":30,"h":30},
+	"sourceSize": {"w":30,"h":30}
 }},
 "meta": {
 	"app": "https://www.codeandweb.com/texturepacker",
 	"version": "1.0",
 	"image": "spritesheet.png",
 	"format": "RGBA8888",
-	"size": {"w":150,"h":75},
+	"size": {"w":180,"h":75},
 	"scale": "1",
-	"smartupdate": "$TexturePacker:SmartUpdate:abad5748cfa30486ec3684e752b8790c:4ead7c551653470cc39d14faf4b69c1a:729adc6043343cfda41c447ce8f464d6$"
+	"smartupdate": "$TexturePacker:SmartUpdate:8ab1c8f4c561047d4fa9886ac33154c0:7f4c7e3e61a9c8300521a2541b97e363:729adc6043343cfda41c447ce8f464d6$"
 }
 }

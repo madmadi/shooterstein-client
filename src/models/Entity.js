@@ -83,6 +83,9 @@ const Entity = {
     return context;
   },
   setup () {},
+  destroy () {
+    this.sprite.destroy();
+  },
   updateLayersOrder () {
     this.sprite.children.sort((b, a) => {
       a.zIndex = a.zIndex || 0;

@@ -4,7 +4,7 @@
   "description": "Simple multiplayer shooter game",
   "main": "webpack.config.js",
   "scripts": {
-    "serve": "webpack-dev-server",
+    "serve": "webpack-dev-server --host 0.0.0.0",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "echo \"Error: no test specified\" && exit 1",

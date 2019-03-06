@@ -1,6 +1,9 @@
 <template>
   <div>
-    <div ref='container' />
+    <div
+      v-show='!isLoading'
+      ref='container'
+    />
   </div>
 </template>
 

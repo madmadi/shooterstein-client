@@ -3,6 +3,7 @@ const webpack = require('webpack');
 const VueLoaderPlugin = require('vue-loader/lib/plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const HTMLWebpackPlugin = require('html-webpack-plugin');
+const env = require('./.env.json');
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -72,6 +73,9 @@ module.exports = {
     new HTMLWebpackPlugin({
       template: 'src/index.html',
       favicon: 'src/assets/favicon.ico',
+    }),
+    new webpack.DefinePlugin({
+      'process.env.API_BASE_URL': JSON.stringify(env.API_BASE_URL),
     }),
   ],
 };
