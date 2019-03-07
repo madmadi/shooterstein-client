@@ -30,6 +30,9 @@ export default {
       height: window.innerHeight,
       backgroundColor: 0xEEEEEE,
     });
+    window.addEventListener('resize', () => this.app.renderer.resize(
+      window.innerWidth, window.innerHeight,
+    ));
   },
   mounted () {
     this.isLoading = true;

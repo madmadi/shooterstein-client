@@ -3,11 +3,12 @@ import Mousetrap from 'mousetrap';
 import Map from 'src/entities/map';
 import Shooter from 'src/entities/shooter';
 import Stone from 'src/entities/stone';
+import { isFullyContained } from 'src/helpers';
 
 const SOCKET_MESSAGE_TYPE_CONFIG = 'config';
 const SOCKET_MESSAGE_TYPE_UPDATE = 'update';
-
-const POSITION_ERROR_THRESHOLD = 20;
+const SERVER_UPDATE_TIME_DELTA_COUNT = 60;
+const MAX_SMOOTH_DISTANCE = 200;
 
 const CONTROLS = {
   UP: 'w',
@@ -22,15 +23,20 @@ export default {
   ticker: null,
   socket: null,
   map: null,
+  username: localStorage.getItem('username'),
   shooters: [],
+  stones: [],
   shootedStones: [],
+  mouseposition: { x: 0, y: 0 },
+  serverLastUpdateTime: 0,
+  serverUpdateTimeDelta: [],
   configs: {
     MAP_WIDTH: window.innerWidth,
     MAP_HEIGHT: window.innerHeight,
-    SHOOTER_SPEED: 1,
-    MAX_BLINK_RANGE: 10,
-    STONE_SPEED: 2,
-    STONE_TTL: 50000,
+    SHOOTER_SPEED: 320,
+    STONE_SPEED: 640,
+    MAX_BLINK_RANGE: 420,
+    STONE_TTL: 5000,
   },
 
   setup (app, state) {
@@ -44,6 +50,7 @@ export default {
 
     this.setupWebsocket();
     this.setupShooter();
+    this.setupStones();
 
     this.socket.onmessage = this.onSocketMessage.bind(this);
 
@@ -77,8 +84,9 @@ export default {
   setupShooter () {
     const movementPressedKeys = [];
     const shooter = Shooter.instantiate(this.map, {
-      name: localStorage.getItem('username'),
+      name: this.username,
       tint: 0xFBBC10,
+      blinkMaxRange: this.configs.MAX_BLINK_RANGE,
       velocity: {
         x: 0,
         y: 0,
@@ -86,35 +94,31 @@ export default {
     });
 
     const onControlChange = () => {
-      shooter.velocity.x = 0;
-      shooter.velocity.y = 0;
+      const velocity = { x: 0, y: 0 };
 
       movementPressedKeys.forEach((key) => {
-        if (key === CONTROLS.UP) shooter.velocity.y = -1;
-        if (key === CONTROLS.LEFT) shooter.velocity.x = -1;
-        if (key === CONTROLS.DOWN) shooter.velocity.y = 1;
-        if (key === CONTROLS.RIGHT) shooter.velocity.x = 1;
+        if (key === CONTROLS.UP) velocity.y = -1;
+        if (key === CONTROLS.LEFT) velocity.x = -1;
+        if (key === CONTROLS.DOWN) velocity.y = 1;
+        if (key === CONTROLS.RIGHT) velocity.x = 1;
       });
 
-      if (shooter.velocity.x !== 0
-        && shooter.velocity.y !== 0) {
-        shooter.velocity.x *= Math.cos(45 * Math.PI / 180);
-        shooter.velocity.y *= Math.sin(45 * Math.PI / 180);
+      if (velocity.x !== 0
+        && velocity.y !== 0) {
+        velocity.x *= Math.cos(45 * Math.PI / 180);
+        velocity.y *= Math.sin(45 * Math.PI / 180);
       }
 
       this.socket.send(JSON.stringify({
         action: 'move',
         payload: {
           velocity: {
-            x: shooter.velocity.x,
-            y: shooter.velocity.y,
+            x: velocity.x,
+            y: velocity.y,
           },
         },
       }));
     };
-
-    shooter.sprite.anchor.x = 0.5;
-    shooter.sprite.anchor.y = 0.5;
 
     Object.keys(CONTROLS).forEach((key) => {
       Mousetrap.bind(CONTROLS[key], () => {
@@ -132,11 +136,18 @@ export default {
       }, 'keyup');
     });
 
+    Mousetrap.bind('space', () => {
+      shooter.blink(this.mouseposition.x, this.mouseposition.y);
+    });
+
     window.addEventListener('click', () => this.shoot(shooter));
 
     window.addEventListener('mousemove', ({ clientX, clientY }) => {
+      this.mouseposition.x = clientX;
+      this.mouseposition.y = clientY;
+
       const angle = Math.atan2(-(clientY - shooter.position.y), clientX - shooter.position.x);
-      // shooter.sprite.rotation = -angle;
+      shooter.setRotation(-angle);
 
       this.socket.send(JSON.stringify({
         action: 'direction',
@@ -146,12 +157,22 @@ export default {
       }));
     });
 
-    this.shooters[localStorage.getItem('username')] = shooter;
+    this.shooters[this.username] = shooter;
+  },
+  setupStones () {
+    this.stones.push(
+      Stone.instantiate(this.map, { position: { x: 220, y: 220 } }),
+      Stone.instantiate(this.map, { position: { x: 550, y: 120 } }),
+      Stone.instantiate(this.map, { position: { x: 420, y: 220 } }),
+      Stone.instantiate(this.map, { position: { x: 420, y: 550 } }),
+      Stone.instantiate(this.map, { position: { x: 550, y: 350 } }),
+    );
   },
   addShooter (shooter) {
     const newshooter = Shooter.instantiate(this.map, {
       tint: Math.random() * 0xFFFFFF,
       name: shooter.name,
+      blinkMaxRange: this.configs.MAX_BLINK_RANGE,
       velocity: {
         x: 0,
         y: 0,
@@ -172,16 +193,19 @@ export default {
     delete this.shooters[name];
   },
   shoot (shooter) {
+    if (shooter.stoneCount < 1) return;
+
     const stone = Stone.instantiate(this.map, {
       position: {
         x: shooter.position.x,
         y: shooter.position.y,
       },
-      rotation: shooter.sprite.rotation,
+      rotation: shooter.getRotation(),
       tint: shooter.tint,
     });
 
     this.shootedStones.push(stone);
+    shooter.decreaseStoneCount();
 
     setTimeout(() => {
       stone.destroy();
@@ -191,15 +215,36 @@ export default {
   updateShootersPosition (delta) {
     Object.keys(this.shooters).forEach((name) => {
       this.shooters[name].position.x += this.shooters[name].velocity.x
-        * delta * this.configs.SHOOTER_SPEED;
+        * delta * this.configs.SHOOTER_SPEED / this.ticker.FPS;
       this.shooters[name].position.y += this.shooters[name].velocity.y
-        * delta * this.configs.SHOOTER_SPEED;
+        * delta * this.configs.SHOOTER_SPEED / this.ticker.FPS;
+
+      // console.log("x",this.shooters[name].position.x);
+      // console.log("y",this.shooters[name].position.y);
+
+      this.updateStoneCollection(this.shooters[name]);
     });
   },
   updateStonesPositions (delta) {
     this.shootedStones.forEach((stone) => {
-      stone.position.x += Math.cos(-stone.rotation) * delta * this.configs.STONE_SPEED;
-      stone.position.y -= Math.sin(-stone.rotation) * delta * this.configs.STONE_SPEED;
+      stone.position.x += Math.cos(-stone.rotation) * delta
+      * this.configs.STONE_SPEED / this.ticker.FPS;
+      stone.position.y -= Math.sin(-stone.rotation) * delta
+      * this.configs.STONE_SPEED / this.ticker.FPS;
+    });
+  },
+  updateStoneCollection (shooter) {
+    this.stones.forEach((stone) => {
+      if (isFullyContained(shooter.sprite, stone.sprite)) {
+        const stoneIndex = this.stones.indexOf(stone);
+
+        if (stoneIndex !== -1) {
+          this.stones.splice(stoneIndex, 1);
+          stone.destroy();
+
+          shooter.increamentStoneCount();
+        }
+      }
     });
   },
   async onSocketMessage (event) {
@@ -216,8 +261,8 @@ export default {
   setServerConfigs ({ payload }) {
     this.configs.MAP_WIDTH = payload.configs.map_width;
     this.configs.MAP_HEIGHT = payload.configs.map_height;
-    this.configs.SHOOTER_SPEED = payload.configs.player_speed * 16;
-    this.configs.MAX_BLINK_RANGE = payload.configs.blink_range;
+    this.configs.SHOOTER_SPEED = payload.configs.player_speed;
+    this.configs.MAX_BLINK_RANGE = payload.configs.max_blink_range;
     this.configs.STONE_SPEED = payload.configs.bullet_speed;
     this.configs.STONE_TTL = payload.configs.bullet_ttl;
 
@@ -227,25 +272,63 @@ export default {
   dispatchServerUpdates ({ payload }) {
     if (this.appState.isLoading) this.appState.isLoading = false;
 
+    const now = Date.now();
+
+    if (this.serverLastUpdateTime !== 0) {
+      this.serverUpdateTimeDelta.push(now - this.serverLastUpdateTime);
+    }
+
+    this.serverLastUpdateTime = now;
+
+    if (this.serverUpdateTimeDelta.length > SERVER_UPDATE_TIME_DELTA_COUNT) {
+      this.serverUpdateTimeDelta.shift();
+    }
+
+    const ping = 50;
+
     payload.forEach((shooter) => {
       if (!this.shooters[shooter.name]) {
         this.addShooter(shooter);
       }
 
-      if (Math.abs(this.shooters[shooter.name].position.x - shooter.position.x) > POSITION_ERROR_THRESHOLD) {
+      if (this.shooters[shooter.name].position.x === 0
+      && this.shooters[shooter.name].position.y === 0) {
         this.shooters[shooter.name].position.x = shooter.position.x;
-      }
-
-      if (Math.abs(this.shooters[shooter.name].position.y - shooter.position.y) > POSITION_ERROR_THRESHOLD) {
         this.shooters[shooter.name].position.y = shooter.position.y;
       }
 
-      this.shooters[shooter.name].velocity = shooter.velocity;
-      this.shooters[shooter.name].sprite.rotation = -shooter.direction;
+      if (Math.sqrt(
+        (this.shooters[shooter.name].position.x - shooter.position.x)
+        * (this.shooters[shooter.name].position.x - shooter.position.x)
+        + (this.shooters[shooter.name].position.y - shooter.position.y)
+        * (this.shooters[shooter.name].position.y - shooter.position.y),
+      ) > MAX_SMOOTH_DISTANCE) {
+        this.shooters[shooter.name].position = shooter.position;
+        this.shooters[shooter.name].velocity = shooter.velocity;
+      } else {
+        const futurePosition = {
+          x: shooter.position.x + (shooter.velocity.x * ping),
+          y: shooter.position.y + (shooter.velocity.y * ping),
+        };
+
+        const velocity = {
+          x: (futurePosition.x - this.shooters[shooter.name].position.x) / ping,
+          y: (futurePosition.y - this.shooters[shooter.name].position.y) / ping,
+        };
+
+        this.shooters[shooter.name].velocity = velocity;
+      }
+
+
+      this.shooters[shooter.name].setHealthPoint(shooter.hp);
+
+      if (shooter.name !== this.username) {
+        this.shooters[shooter.name].setRotation(-shooter.direction);
+      }
     });
 
     Object.keys(this.shooters)
-      .filter(name => name !== localStorage.getItem('username'))
+      .filter(name => name !== this.username)
       .filter(name => !payload.find(s => s.name === name))
       .forEach(name => this.removeShooter(name));
   },
