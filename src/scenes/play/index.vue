@@ -1,9 +1,16 @@
 <template>
-  <div>
+  <div class='scene'>
     <div
-      v-show='!isLoading'
+      v-show='!isLoading && !isDead'
       ref='container'
     />
+    <p v-if='isLoading'>
+      Communicating...
+    </p>
+    <div v-if='isDead'>
+      <p>Oh, you are dead {{ username }}!</p>
+      <button @click='retry'>Fight again</button>
+    </div>
   </div>
 </template>
 
@@ -19,9 +26,17 @@ export default {
   data () {
     return {
       app: null,
-      isLoading: true,
       username: localStorage.getItem('username'),
+      isLoading: true,
+      isDead: false,
     };
+  },
+  watch: {
+    isDead (value) {
+      if (value === true) {
+        game.destroy();
+      }
+    },
   },
   created () {
     this.app = new Application({
@@ -53,7 +68,9 @@ export default {
   methods: {
     play () {
       game.setup(this.app, this.$data);
-      this.isLoading = false;
+    },
+    retry () {
+      this.$parent.changeScene('startScene');
     },
   },
 };

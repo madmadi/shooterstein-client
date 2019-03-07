@@ -85,37 +85,3 @@ export default {
   },
 };
 </script>
-
-<style scoped>
-.scene,
-button,
-input {
-  font-family: monospace;
-}
-
-.scene {
-  max-width: 768px;
-  margin: 0 auto;
-  text-align: center;
-}
-
-input,
-button {
-  height: 50px;
-  border: none;
-  border-radius: 4px;
-}
-
-input {
-  display: block;
-  width: 100%;
-  margin: 10px 0;
-  padding: 0 20px;
-  background-color: #ddd;
-}
-
-button {
-  cursor: pointer;
-  background-color: limegreen;
-}
-</style>

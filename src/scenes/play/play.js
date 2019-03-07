@@ -8,7 +8,11 @@ import { isFullyContained } from 'src/helpers';
 const SOCKET_MESSAGE_TYPE_CONFIG = 'config';
 const SOCKET_MESSAGE_TYPE_UPDATE = 'update';
 const SERVER_UPDATE_TIME_DELTA_COUNT = 60;
-const MAX_SMOOTH_DISTANCE = 200;
+const MAX_SMOOTH_DISTANCE = 100;
+const OBJECT_TYPE_PLAYER = 'player';
+const OBJECT_TYPE_STONE = 'bullet';
+const START_FREEZ_TIME_MS = 1000;
+const PING_MAGIC_NUMBER = 50;
 
 const CONTROLS = {
   UP: 'w',
@@ -24,9 +28,9 @@ export default {
   socket: null,
   map: null,
   username: localStorage.getItem('username'),
-  shooters: [],
   stones: [],
-  shootedStones: [],
+  shooters: {},
+  shootedStones: {},
   mouseposition: { x: 0, y: 0 },
   serverLastUpdateTime: 0,
   serverUpdateTimeDelta: [],
@@ -55,6 +59,7 @@ export default {
     this.socket.onmessage = this.onSocketMessage.bind(this);
 
     this.ticker.add(delta => this.updateShootersPosition(delta));
+    this.ticker.add(delta => this.updateCameraPosition(delta));
     this.ticker.add(delta => this.updateStonesPositions(delta));
     this.ticker.start();
 
@@ -143,11 +148,15 @@ export default {
     window.addEventListener('click', () => this.shoot(shooter));
 
     window.addEventListener('mousemove', ({ clientX, clientY }) => {
-      this.mouseposition.x = clientX;
-      this.mouseposition.y = clientY;
+      this.mouseposition.x = clientX - this.map.position.x;
+      this.mouseposition.y = clientY - this.map.position.y;
 
-      const angle = Math.atan2(-(clientY - shooter.position.y), clientX - shooter.position.x);
-      shooter.setRotation(-angle);
+      const angle = Math.atan2(
+        -(this.mouseposition.y - shooter.position.y),
+        this.mouseposition.x - shooter.position.x,
+      );
+
+      shooter.setDirection(-angle);
 
       this.socket.send(JSON.stringify({
         action: 'direction',
@@ -186,50 +195,49 @@ export default {
     newshooter.sprite.anchor.x = 0.5;
     newshooter.sprite.anchor.y = 0.5;
 
-    this.shooters[shooter.name] = newshooter;
+    this.shooters[shooter.id] = newshooter;
   },
-  removeShooter (name) {
-    this.shooters[name].destroy();
-    delete this.shooters[name];
+  addStone (stone) {
+    const newstone = Stone.instantiate(this.map, {
+      position: {
+        x: stone.position.x,
+        y: stone.position.y,
+      },
+      rotation: stone.direction,
+      tint: stone.tint,
+    });
+
+    this.shootedStones[stone.id] = newstone;
   },
   shoot (shooter) {
     if (shooter.stoneCount < 1) return;
 
-    const stone = Stone.instantiate(this.map, {
-      position: {
-        x: shooter.position.x,
-        y: shooter.position.y,
+    this.socket.send(JSON.stringify({
+      action: 'shoot',
+      payload: {
+        direction: shooter.getRotation(),
       },
-      rotation: shooter.getRotation(),
-      tint: shooter.tint,
-    });
-
-    this.shootedStones.push(stone);
-    shooter.decreaseStoneCount();
-
-    setTimeout(() => {
-      stone.destroy();
-      this.shootedStones.splice(this.shootedStones.indexOf(stone), 1);
-    }, this.configs.STONE_TTL);
+    }));
   },
   updateShootersPosition (delta) {
-    Object.keys(this.shooters).forEach((name) => {
-      this.shooters[name].position.x += this.shooters[name].velocity.x
+    Object.keys(this.shooters).forEach((id) => {
+      this.shooters[id].position.x += this.shooters[id].velocity.x
         * delta * this.configs.SHOOTER_SPEED / this.ticker.FPS;
-      this.shooters[name].position.y += this.shooters[name].velocity.y
+      this.shooters[id].position.y += this.shooters[id].velocity.y
         * delta * this.configs.SHOOTER_SPEED / this.ticker.FPS;
 
-      // console.log("x",this.shooters[name].position.x);
-      // console.log("y",this.shooters[name].position.y);
-
-      this.updateStoneCollection(this.shooters[name]);
+      this.updateStoneCollection(this.shooters[id]);
     });
   },
+  updateCameraPosition () {
+    // this.map.position.x = window.innerWidth / 2 - this.shooters[this.username].position.x;
+    // this.map.position.y = window.innerHeight / 2 - this.shooters[this.username].position.y;
+  },
   updateStonesPositions (delta) {
-    this.shootedStones.forEach((stone) => {
-      stone.position.x += Math.cos(-stone.rotation) * delta
+    Object.keys(this.shootedStones).forEach((id) => {
+      this.shootedStones[id].position.x += Math.cos(-this.shootedStones[id].rotation) * delta
       * this.configs.STONE_SPEED / this.ticker.FPS;
-      stone.position.y -= Math.sin(-stone.rotation) * delta
+      this.shootedStones[id].position.y -= Math.sin(-this.shootedStones[id].rotation) * delta
       * this.configs.STONE_SPEED / this.ticker.FPS;
     });
   },
@@ -241,8 +249,6 @@ export default {
         if (stoneIndex !== -1) {
           this.stones.splice(stoneIndex, 1);
           stone.destroy();
-
-          shooter.increamentStoneCount();
         }
       }
     });
@@ -268,10 +274,10 @@ export default {
 
     this.map.sprite.width = this.configs.MAP_WIDTH;
     this.map.sprite.height = this.configs.MAP_HEIGHT;
+
+    setTimeout(() => { this.appState.isLoading = false; }, START_FREEZ_TIME_MS);
   },
   dispatchServerUpdates ({ payload }) {
-    if (this.appState.isLoading) this.appState.isLoading = false;
-
     const now = Date.now();
 
     if (this.serverLastUpdateTime !== 0) {
@@ -284,52 +290,83 @@ export default {
       this.serverUpdateTimeDelta.shift();
     }
 
-    const ping = 50;
+    payload.forEach((update) => {
+      let object = null;
 
-    payload.forEach((shooter) => {
-      if (!this.shooters[shooter.name]) {
-        this.addShooter(shooter);
+      if (update.type === OBJECT_TYPE_PLAYER
+        && !this.shooters[update.id]
+        && update.name !== this.username) {
+        this.addShooter(update);
+      } else if (update.type === OBJECT_TYPE_STONE && !this.shootedStones[update.id]) {
+        this.addStone(update);
       }
 
-      if (this.shooters[shooter.name].position.x === 0
-      && this.shooters[shooter.name].position.y === 0) {
-        this.shooters[shooter.name].position.x = shooter.position.x;
-        this.shooters[shooter.name].position.y = shooter.position.y;
+      if (update.type === OBJECT_TYPE_PLAYER) {
+        if (update.name === this.username) {
+          object = this.shooters[update.name];
+        } else {
+          object = this.shooters[update.id];
+        }
+
+        object.setHealthPoint(update.hp);
+        object.setStoneCount(update.ammo);
+
+        if (object.name !== this.username) {
+          object.setDirection(-update.direction);
+          if (object.health.width < 1) this.appState.isDead = true;
+        }
+      } else if (update.type === OBJECT_TYPE_STONE) {
+        object = this.shootedStones[update.id];
       }
 
-      if (Math.sqrt(
-        (this.shooters[shooter.name].position.x - shooter.position.x)
-        * (this.shooters[shooter.name].position.x - shooter.position.x)
-        + (this.shooters[shooter.name].position.y - shooter.position.y)
-        * (this.shooters[shooter.name].position.y - shooter.position.y),
+
+      if (object.position.x === 0
+      && object.position.y === 0) {
+        object.position.x = update.position.x;
+        object.position.y = update.position.y;
+      } else if (Math.sqrt(
+        (object.position.x - update.position.x)
+        * (object.position.x - update.position.x)
+        + (object.position.y - update.position.y)
+        * (object.position.y - update.position.y),
       ) > MAX_SMOOTH_DISTANCE) {
-        this.shooters[shooter.name].position = shooter.position;
-        this.shooters[shooter.name].velocity = shooter.velocity;
+        object.position = update.position;
+        object.velocity = update.velocity;
       } else {
         const futurePosition = {
-          x: shooter.position.x + (shooter.velocity.x * ping),
-          y: shooter.position.y + (shooter.velocity.y * ping),
+          x: update.position.x + (update.velocity.x * PING_MAGIC_NUMBER),
+          y: update.position.y + (update.velocity.y * PING_MAGIC_NUMBER),
         };
 
         const velocity = {
-          x: (futurePosition.x - this.shooters[shooter.name].position.x) / ping,
-          y: (futurePosition.y - this.shooters[shooter.name].position.y) / ping,
+          x: (futurePosition.x - object.position.x) / PING_MAGIC_NUMBER,
+          y: (futurePosition.y - object.position.y) / PING_MAGIC_NUMBER,
         };
 
-        this.shooters[shooter.name].velocity = velocity;
-      }
-
-
-      this.shooters[shooter.name].setHealthPoint(shooter.hp);
-
-      if (shooter.name !== this.username) {
-        this.shooters[shooter.name].setRotation(-shooter.direction);
+        object.velocity.x = velocity.x;
+        object.velocity.y = velocity.y;
       }
     });
 
-    Object.keys(this.shooters)
-      .filter(name => name !== this.username)
-      .filter(name => !payload.find(s => s.name === name))
-      .forEach(name => this.removeShooter(name));
+    this.destroyUselessObjects(
+      payload
+        .filter(({ name }) => name !== this.username)
+        .map(({ id }) => id),
+    );
+  },
+  destroyUselessObjects (liveObjects) {
+    Object.keys(this.shootedStones).forEach((id) => {
+      if (!liveObjects.includes(id)) {
+        this.shootedStones[id].destroy();
+        delete this.shootedStones[id];
+      }
+    });
+
+    Object.keys(this.shooters).forEach((id) => {
+      if (!liveObjects.includes(id)) {
+        this.shooters[id].destroy();
+        delete this.shooters[id];
+      }
+    });
   },
 };

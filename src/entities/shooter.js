@@ -110,7 +110,7 @@ export default Entity({
   },
 
   methods: {
-    setRotation (radian) {
+    setDirection (radian) {
       this.dynamicSprite.rotation = radian;
     },
     getRotation () {
@@ -119,12 +119,8 @@ export default Entity({
     setHealthPoint (percentage) {
       this.health.width = this.health.width / (100 / percentage);
     },
-    increamentStoneCount () {
-      this.stoneCount += 1;
-      this.stoneCountText.text = this.stoneCount;
-    },
-    decreaseStoneCount () {
-      this.stoneCount -= 1;
+    setStoneCount (count) {
+      this.stoneCount = count;
       this.stoneCountText.text = this.stoneCount;
     },
     addPowerup (powerup) {
